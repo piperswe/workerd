@@ -453,6 +453,68 @@ jsg::Promise<void> ServiceWorkerGlobalScope::test(
                      eh.getCtx(lock.getIsolate()));
 }
 
+void ServiceWorkerGlobalScope::sendHibernatableWebSocketMessage(
+    kj::OneOf<kj::String, kj::Array<byte>> message,
+    Worker::Lock& lock, kj::Maybe<ExportedHandler&> exportedHandler) {
+  auto event = jsg::alloc<HibernatableWebSocketEvent>();
+
+  KJ_IF_MAYBE(h, exportedHandler) {
+    KJ_IF_MAYBE(handler, h->webSocketMessage) {
+      auto promise = (*handler)(lock, event->getWebSocket(lock), kj::mv(message));
+      event->waitUntil(kj::mv(promise));
+    } else {
+      lock.logWarningOnce(
+          "Received a HibernatableWebSocketMessageEvent but we lack a handler for "
+          "HibernatableWebSocketMessage events. Did you remember to export a webSocketMessage() function?");
+      JSG_FAIL_REQUIRE(Error, "Handler does not export a webSocketMessage() function");
+    }
+  } else {
+    JSG_FAIL_REQUIRE(Error, "Handler does not export a webSocketMessage() function");
+  }
+}
+
+void ServiceWorkerGlobalScope::sendHibernatableWebSocketClose(
+    kj::String reason,
+    int code,
+    Worker::Lock& lock, kj::Maybe<ExportedHandler&> exportedHandler) {
+  auto event = jsg::alloc<HibernatableWebSocketEvent>();
+
+  KJ_IF_MAYBE(h, exportedHandler) {
+    KJ_IF_MAYBE(handler, h->webSocketClose) {
+      auto promise = (*handler)(lock, event->getWebSocket(lock), kj::mv(reason), code);
+      event->waitUntil(kj::mv(promise));
+    } else {
+      lock.logWarningOnce(
+          "Received a HibernatableWebSocketCloseEvent but we lack a handler for "
+          "HibernatableWebSocketClose events. Did you remember to export a webSocketClose() function?");
+      JSG_FAIL_REQUIRE(Error, "Handler does not export a webSocketClose() function");
+    }
+  } else {
+    JSG_FAIL_REQUIRE(Error, "Handler does not export a webSocketClose() function");
+  }
+}
+
+void ServiceWorkerGlobalScope::sendHibernatableWebSocketError(
+    kj::String error,
+    Worker::Lock& lock,
+    kj::Maybe<ExportedHandler&> exportedHandler) {
+  auto event = jsg::alloc<HibernatableWebSocketEvent>();
+
+  KJ_IF_MAYBE(h, exportedHandler) {
+    KJ_IF_MAYBE(handler, h->webSocketError) {
+      auto promise = (*handler)(lock, event->getWebSocket(lock), kj::mv(error));
+      event->waitUntil(kj::mv(promise));
+    } else {
+      lock.logWarningOnce(
+          "Received a HibernatableWebSocketErrorEvent but we lack a handler for "
+          "HibernatableWebSocketError events. Did you remember to export a webSocketError() function?");
+      JSG_FAIL_REQUIRE(Error, "Handler does not export a webSocketError() function");
+    }
+  } else {
+    JSG_FAIL_REQUIRE(Error, "Handler does not export a webSocketError() function");
+  }
+}
+
 void ServiceWorkerGlobalScope::emitPromiseRejection(
     jsg::Lock& js,
     v8::PromiseRejectEvent event,

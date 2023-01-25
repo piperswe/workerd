@@ -110,6 +110,29 @@ struct AlarmRun @0xfa8ea4e97e23b03d {
   retryCountsAgainstLimit @2 :Bool = true;
 }
 
+struct HibernatableWebSocketEvent {
+  ws @0 :Data;
+  # Identifies the particular websocket that this message was received on, such that the
+  # hibernation manager in the process sandbox is able to construct an `api::Websocket`
+  # instance for it.
+
+  payload :union {
+    text @1 :Text;
+    data @2 :Data;
+
+    close :group {
+      code @3 :UInt16;
+      reason @4 :Text;
+    }
+
+    error @5 :Text;
+  }
+}
+
+struct HibernatableWebSocketResponse {
+  outcome @0 :EventOutcome;
+}
+
 interface EventDispatcher @0xf20697475ec1752d {
   # Interface used to deliver events to a Worker's global event handlers.
 
@@ -142,6 +165,9 @@ interface EventDispatcher @0xf20697475ec1752d {
   obsolete6 @6();
   obsolete7 @7();
   # Deleted methods, do not reuse these numbers.
+
+  hibernatableWebSocketEvent @8 (message :HibernatableWebSocketEvent) ->
+      (result :HibernatableWebSocketResponse);
 
   # Other methods might be added to handle other kinds of events, e.g. TCP connections, or maybe
   # even native Cap'n Proto RPC eventually.
