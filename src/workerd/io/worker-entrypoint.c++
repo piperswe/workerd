@@ -161,6 +161,10 @@ kj::Promise<void> WorkerEntrypoint::request(
        &metrics = incomingRequest->getMetrics(),
        &wrappedResponse = *wrappedResponse, entrypointName = entrypointName]
       (Worker::Lock& lock) mutable {
+    // TODO(cleanup): Here we rely on the root level JS being evaluated synchronously in
+    // ServiceWorkerGlobalScope::request().  Is there a more reliable way to express this?
+    jsg::AsyncContextFrame::StorageScope scope = context.makeAsyncTraceScope(lock);
+
     return lock.getGlobalScope().request(
         method, url, headers, requestBody, wrappedResponse,
         cfBlobJson, lock, lock.getExportedHandler(entrypointName, context.getActor()));
@@ -399,6 +403,10 @@ kj::Promise<WorkerInterface::AlarmResult> WorkerEntrypoint::runAlarm(
           [scheduledTime, entrypointName=entrypointName, &context,
            &metrics = incomingRequest->getMetrics()]
           (Worker::Lock& lock){
+        // TODO(cleanup): Here we rely on the root level JS being evaluated synchronously in
+        // ServiceWorkerGlobalScope::request().  Is there a more reliable way to express this?
+        jsg::AsyncContextFrame::StorageScope scope = context.makeAsyncTraceScope(lock);
+
         return lock.getGlobalScope().runAlarm(scheduledTime, lock,
             lock.getExportedHandler(entrypointName, context.getActor()));
       }).attach(kj::defer([this, incomingRequest = kj::mv(incomingRequest)]() mutable {
