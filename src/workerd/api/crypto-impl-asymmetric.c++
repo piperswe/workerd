@@ -113,35 +113,9 @@ public:
       RSA& rsa = JSG_REQUIRE_NONNULL(EVP_PKEY_get0_RSA(getEvpPkey()), DOMDataError,
           "Missing RSA key", tryDescribeOpensslErrors());
 
-      // TODO(soon): Use more thorough checks for now to detect if requiring 32 bytes beyond the
-      // digest size would break existing scripts. Prefix sizes derived from boringssl's
-      // kPKCS1SigPrefixes.
-#define RSA_PKCS1_PADDING_SIZE 11
-#define RSA_PKCS1_MD5_PREFIX_SIZE 18
-#define RSA_PKCS1_SHA1_PREFIX_SIZE 15
-#define RSA_PKCS1_SHA_PREFIX_SIZE 19
-
-      const auto& hashName = lookupDigestAlgorithm(chooseHash(algorithm.hash)).first;
-      auto paddingOverhead = RSA_PKCS1_PADDING_SIZE;
-      if (hashName == "MD5") {
-        paddingOverhead += RSA_PKCS1_MD5_PREFIX_SIZE;
-      } else if (hashName == "SHA-1") {
-        paddingOverhead += RSA_PKCS1_SHA1_PREFIX_SIZE;
-      } else {
-        paddingOverhead += RSA_PKCS1_SHA_PREFIX_SIZE;
-      }
-
-      JSG_REQUIRE(EVP_MD_size(type) + paddingOverhead <= RSA_size(&rsa), DOMOperationError,
-          "key too small for signing with given digest");
-      if (RSA_size(&rsa) < EVP_MD_size(type) + 32) {
-        static bool logOnce KJ_UNUSED = ([rsa] {
-          KJ_LOG(WARNING, "Signing with peculiar key size of ", RSA_size(&rsa), " bytes");
-          return true;
-        })();
-      }
-
-      // JSG_REQUIRE(EVP_MD_size(type) + 32 <= RSA_size(&rsa), DOMOperationError,
-      //     "key too small for signing with given digest");
+      JSG_REQUIRE(EVP_MD_size(type) + 32 <= RSA_size(&rsa), DOMOperationError,
+          "key too small for signing with given digest, need at least ",
+          8 * (EVP_MD_size(type) + 32), "bits.");
     } else if (getAlgorithmName() == "RSA-PSS") {
       // Similarly, RSA-PSS requires keys to be at least the size of the digest and salt plus 2
       // bytes, see https://developer.mozilla.org/en-US/docs/Web/API/RsaPssParams for details.
@@ -454,9 +428,11 @@ public:
   }
 
   void addSalt(EVP_PKEY_CTX* pctx, const SubtleCrypto::SignAlgorithm& algorithm) const override {
-    auto salt = JSG_REQUIRE_NONNULL(algorithm.saltLength, TypeError,
+    // TODO: Switching to non-TypeErrors to match behavior above – should we switch away from
+    // TypeError here in general?
+    auto salt = JSG_REQUIRE_NONNULL(algorithm.saltLength, DOMDataError,
         "Failed to provide salt for RSA-PSS key operation which requires a salt");
-    JSG_REQUIRE(salt >= 0, TypeError, "SaltLength for RSA-PSS must be non-negative (provided ",
+    JSG_REQUIRE(salt >= 0, DOMDataError, "SaltLength for RSA-PSS must be non-negative (provided ",
         salt, ").");
     OSSLCALL(EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING));
     OSSLCALL(EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, salt));
@@ -711,35 +687,11 @@ kj::Maybe<T> fromBignum(kj::ArrayPtr<kj::byte> value) {
   return asUnsigned;
 }
 
-void validateRsaParams(int modulusLength, kj::ArrayPtr<kj::byte> publicExponent,
-    bool warnImport = false) {
+void validateRsaParams(int modulusLength, kj::ArrayPtr<kj::byte> publicExponent) {
   // The W3C standard itself doesn't describe any parameter validation but the conformance tests
   // do test "bad" exponents, likely because everyone uses OpenSSL that suffers from poor behavior
   // with these bad exponents (e.g. if an exponent < 3 or 65535 generates an infinite loop, a
   // library might be expected to handle such cases on its own, no?).
-
-  // TODO(soon): We should also enforce these limitations on imported keys. To see if this breaks
-  // existing scripts only provide a warning in sentry for now.
-  if (warnImport) {
-    if (modulusLength % 8 || modulusLength < 256 || modulusLength > 16384) {
-      static bool logOnce KJ_UNUSED = ([modulusLength] {
-        KJ_LOG(WARNING, "Imported RSA key has invalid modulus length ", modulusLength, ".");
-        return true;
-      })();
-    }
-    KJ_IF_MAYBE(v, fromBignum<unsigned>(publicExponent)) {
-      if (*v != 3 && *v != 65537) {
-        static bool logOnce KJ_UNUSED = ([v] {
-          KJ_LOG(WARNING, "Imported RSA key has invalid publicExponent ", *v,".");
-          return true;
-        })();
-      }
-    } else {
-      JSG_FAIL_REQUIRE(DOMOperationError, "The \"publicExponent\" must be either 3 or 65537, but "
-          "got a number larger than 2^32.");
-    }
-    return;
-  }
 
   // Use Chromium's limits for RSA keygen to avoid infinite loops:
   // * Key sizes a multiple of 8 bits.
@@ -973,7 +925,7 @@ kj::Own<CryptoKey::Impl> CryptoKey::Impl::importRsa(
   KJ_ASSERT(BN_bn2bin(e, publicExponent.begin()) == publicExponent.size());
 
   // Validate modulus and exponent, reject imported RSA keys that may be unsafe.
-  validateRsaParams(modulusLength, publicExponent, true);
+  validateRsaParams(modulusLength, publicExponent);
 
   auto keyAlgorithm = CryptoKey::RsaKeyAlgorithm {
     .name = normalizedName,
@@ -1044,7 +996,7 @@ kj::Own<CryptoKey::Impl> CryptoKey::Impl::importRsaRaw(
   KJ_ASSERT(BN_bn2bin(e, publicExponent.begin()) == publicExponent.size());
 
   // Validate modulus and exponent, reject imported RSA keys that may be unsafe.
-  validateRsaParams(modulusLength, publicExponent, true);
+  validateRsaParams(modulusLength, publicExponent);
 
   auto keyAlgorithm = CryptoKey::RsaKeyAlgorithm {
     .name = "RSA-RAW"_kj,
