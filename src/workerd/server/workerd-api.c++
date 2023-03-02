@@ -26,6 +26,11 @@
 
 namespace workerd::server {
 
+struct BindingWrapper {
+  jsg::Function<jsg::Value(jsg::Dict<jsg::Value>)> wrapBindings;
+  JSG_STRUCT(wrapBindings);
+};
+
 JSG_DECLARE_ISOLATE_TYPE(JsgWorkerdIsolate,
   // Declares the listing of host object types and structs that the jsg
   // automatic type mapping will understand. Each of the various
@@ -70,7 +75,8 @@ JSG_DECLARE_ISOLATE_TYPE(JsgWorkerdIsolate,
   jsg::InjectConfiguration<CompatibilityFlags::Reader>,
   Worker::ApiIsolate::ErrorInterface,
   jsg::CommonJsModuleObject,
-  jsg::CommonJsModuleContext);
+  jsg::CommonJsModuleContext,
+  BindingWrapper);
 
 struct WorkerdApiIsolate::Impl {
   kj::Own<CompatibilityFlags::Reader> features;
@@ -517,6 +523,27 @@ v8::Local<v8::Value> createValue(
     KJ_CASE_ONEOF(data, kj::Array<byte>) {
       value = lock.wrap(context, kj::heapArray(data.asPtr()));
     }
+
+    KJ_CASE_ONEOF(wrapped, Global::Wrapped) {
+      auto moduleRegistry = jsg::ModuleRegistry::from(lock);
+      auto& wrapWith = wrapped.wrapWith;
+      KJ_IF_MAYBE(moduleInfo, moduleRegistry->resolve(lock, kj::Path::parse(wrapWith))) {
+        auto module = moduleInfo->module.getHandle(lock);
+        jsg::instantiateModule(lock, module);
+        auto wrapper = lock.unwrap<BindingWrapper>(context, module->GetModuleNamespace());
+        kj::Vector<jsg::Dict<jsg::Value>::Field> innerBindings;
+        for (const auto& innerBinding: wrapped.innerBindings) {
+          innerBindings.add(jsg::Dict<jsg::Value>::Field{
+            .name = kj::str(innerBinding.name),
+            .value = jsg::Value(lock.v8Isolate, createValue(lock, innerBinding, featureFlags)),
+          });
+        }
+        auto v = wrapper.wrapBindings(lock, { .fields = innerBindings.releaseAsArray() });
+        value = v.getHandle(lock);
+      } else {
+        KJ_LOG(ERROR, "wrapWith module can't be resolved", wrapWith);
+      }
+    }
   }
 
   return value;
@@ -584,6 +611,9 @@ WorkerdApiIsolate::Global WorkerdApiIsolate::Global::clone() const {
     }
     KJ_CASE_ONEOF(data, kj::Array<byte>) {
       result.value = kj::heapArray(data.asPtr());
+    }
+    KJ_CASE_ONEOF(wrapped, Global::Wrapped) {
+      result.value = wrapped.clone();
     }
   }
 

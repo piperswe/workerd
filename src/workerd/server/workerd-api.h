@@ -116,9 +116,20 @@ public:
         return *this;
       }
     };
+    struct Wrapped {
+      kj::String wrapWith;
+      kj::Array<Global> innerBindings;
+
+      Wrapped clone() const {
+        return Wrapped {
+          .wrapWith = kj::str(wrapWith),
+          .innerBindings = KJ_MAP(b, innerBindings) { return b.clone(); }
+        };
+      }
+    };
     kj::String name;
     kj::OneOf<Json, Fetcher, KvNamespace, R2Bucket, R2Admin, CryptoKey, EphemeralActorNamespace,
-              DurableActorNamespace, kj::String, kj::Array<byte>> value;
+              DurableActorNamespace, kj::String, kj::Array<byte>, Wrapped> value;
 
     Global clone() const;
   };
